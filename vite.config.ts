@@ -2,16 +2,19 @@ declare const process: { env: Record<string, string | undefined> };
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { chatApiPlugin } from "./vite-plugin-chat-api.ts";
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(() => ({
-  plugins: [react()],
+  plugins: [react(), chatApiPlugin()],
   clearScreen: false,
   server: {
     port: 43187,
     strictPort: true,
-    host: host || "127.0.0.1",
+    host: host || true,
+    allowedHosts: true as true,
+    cors: true,
     hmr: host
       ? {
           protocol: "ws",
@@ -19,18 +22,6 @@ export default defineConfig(() => ({
           port: 43188,
         }
       : undefined,
-    proxy: {
-      "/deepseek-api": {
-        target: "https://api.deepseek.com",
-        changeOrigin: true,
-        rewrite: (path: string) => path.replace(/^\/deepseek-api/, ""),
-      },
-      "/openai-api": {
-        target: "https://api.openai.com",
-        changeOrigin: true,
-        rewrite: (path: string) => path.replace(/^\/openai-api/, ""),
-      },
-    },
     watch: {
       ignored: ["**/src-tauri/**"],
     },
@@ -38,6 +29,8 @@ export default defineConfig(() => ({
   preview: {
     port: 43187,
     strictPort: true,
-    host: "127.0.0.1",
+    host: true,
+    allowedHosts: true as true,
+    cors: true,
   },
 }));

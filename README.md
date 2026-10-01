@@ -38,7 +38,7 @@ npm install
 npm run dev
 ```
 
-The browser preview is **http://127.0.0.1:43187**. In the browser, transcripts live in local storage and can be exported as Markdown. With keys set, the dev server proxies DeepSeek and OpenAI.
+The browser preview is **http://127.0.0.1:43187**. In the browser, transcripts live in local storage and can be exported as Markdown. Chat requests go through the local `/api/chat` endpoint (the page does not call the providers directly, which avoids browser CORS failures).
 
 Desktop window:
 

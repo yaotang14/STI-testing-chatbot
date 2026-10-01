@@ -153,30 +153,32 @@ async function callProvider(
   apiKey: string,
   history: Session["messages"],
 ): Promise<string> {
-  const url =
-    provider === "openai" ? "/openai-api/v1/chat/completions" : "/deepseek-api/chat/completions";
-  const body: Record<string, unknown> = {
-    model: modelFor(provider),
-    messages: historyMessages(history),
-    stream: false,
-  };
-  if (provider === "deepseek") {
-    body.thinking = { type: "disabled" };
+  let res: Response;
+  try {
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider,
+        apiKey,
+        messages: historyMessages(history),
+      }),
+    });
+  } catch {
+    throw new Error(
+      `Could not reach ${providerLabel(provider)}. Use this app through the running local server (npm run dev) or the desktop app, then try again.`,
+    );
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = (await res.json()) as {
+  let data: {
     error?: { message?: string };
     choices?: { message?: { content?: string } }[];
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    throw new Error(`${providerLabel(provider)} returned an unreadable response.`);
+  }
   if (data.error?.message) throw new Error(data.error.message);
   if (!res.ok) throw new Error(`${providerLabel(provider)} request failed (HTTP ${res.status})`);
   const text = data.choices?.[0]?.message?.content?.trim();
