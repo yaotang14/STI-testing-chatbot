@@ -1,8 +1,12 @@
+export type ProviderId = "deepseek" | "openai";
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system" | string;
   content: string;
   createdAt: string;
+  provider?: string;
+  model?: string;
 };
 
 export type Session = {
@@ -10,6 +14,7 @@ export type Session = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  provider: string;
   model: string;
   messages: ChatMessage[];
 };
@@ -19,17 +24,24 @@ export type SessionSummary = {
   title: string;
   updatedAt: string;
   messageCount: number;
+  provider: string;
 };
 
 export type AppStatus = {
-  hasApiKey: boolean;
+  hasDeepseekKey: boolean;
+  hasOpenaiKey: boolean;
   mockMode: boolean;
-  model: string;
+  provider: ProviderId;
   historyDir: string;
-  keySource: string;
 };
 
 export type AppSettings = {
-  apiKey: string;
+  deepseekApiKey: string;
+  openaiApiKey: string;
   mockMode: boolean;
+  provider: ProviderId;
 };
+
+export function providerLabel(provider: string): string {
+  return provider === "openai" ? "ChatGPT" : "DeepSeek";
+}

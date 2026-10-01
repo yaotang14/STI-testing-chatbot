@@ -1,12 +1,13 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./lib/api";
-import type { AppStatus, Session, SessionSummary } from "./lib/types";
+import type { AppStatus, ProviderId, Session, SessionSummary } from "./lib/types";
+import { providerLabel } from "./lib/types";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
@@ -25,8 +26,10 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [deepseekKey, setDeepseekKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
   const [mockMode, setMockMode] = useState(false);
+  const [provider, setProvider] = useState<ProviderId>("deepseek");
   const [savingSettings, setSavingSettings] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const booted = useRef(false);
@@ -40,16 +43,17 @@ export default function App() {
   const openSession = useCallback(async (id: string) => {
     const session = await api.loadSession(id);
     setCurrent(session);
+    setProvider((session.provider as ProviderId) === "openai" ? "openai" : "deepseek");
     setSendError(null);
     setSidebarOpen(false);
   }, []);
 
   const startNew = useCallback(async () => {
-    const session = await api.createSession();
+    const session = await api.createSession(provider);
     setCurrent(session);
     await refreshList();
     setSidebarOpen(false);
-  }, [refreshList]);
+  }, [provider, refreshList]);
 
   useEffect(() => {
     if (booted.current) return;
@@ -59,20 +63,43 @@ export default function App() {
         const s = await api.status();
         setStatus(s);
         setMockMode(s.mockMode);
+        setProvider(s.provider);
         const settings = await api.settings();
-        setApiKeyInput(settings.apiKey);
+        setDeepseekKey(settings.deepseekApiKey);
+        setOpenaiKey(settings.openaiApiKey);
         const items = await refreshList();
         if (items[0]) await openSession(items[0].id);
-        else await startNew();
+        else {
+          const session = await api.createSession(s.provider);
+          setCurrent(session);
+          await refreshList();
+        }
       } catch (err) {
-        setBootError(err instanceof Error ? err.message : "启动失败");
+        setBootError(err instanceof Error ? err.message : "Could not start the app.");
       }
     })();
-  }, [openSession, refreshList, startNew]);
+  }, [openSession, refreshList]);
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [current?.messages.length, loading]);
+
+  async function persistProvider(next: ProviderId) {
+    setProvider(next);
+    const settings = await api.settings();
+    const s = await api.saveSettings({
+      deepseekApiKey: settings.deepseekApiKey,
+      openaiApiKey: settings.openaiApiKey,
+      mockMode: settings.mockMode,
+      provider: next,
+    });
+    setStatus(s);
+    if (current) {
+      const updated = await api.setSessionProvider(current.id, next);
+      setCurrent(updated);
+      await refreshList();
+    }
+  }
 
   async function onSend(event?: FormEvent) {
     event?.preventDefault();
@@ -91,20 +118,20 @@ export default function App() {
           role: "user",
           content: text,
           createdAt: new Date().toISOString(),
+          provider,
         },
       ],
     };
     setCurrent(optimistic);
     try {
-      const updated = await api.sendMessage(current.id, text);
+      const updated = await api.sendMessage(current.id, text, provider);
       setCurrent(updated);
       await refreshList();
-      const s = await api.status();
-      setStatus(s);
+      setStatus(await api.status());
     } catch (err) {
       setCurrent(current);
       setDraft(text);
-      setSendError(err instanceof Error ? err.message : "发送失败");
+      setSendError(err instanceof Error ? err.message : "Could not send the message.");
     } finally {
       setLoading(false);
     }
@@ -115,14 +142,20 @@ export default function App() {
     setSavingSettings(true);
     setSendError(null);
     try {
-      const next = await api.saveSettings(apiKeyInput, mockMode);
+      const next = await api.saveSettings({
+        deepseekApiKey: deepseekKey,
+        openaiApiKey: openaiKey,
+        mockMode,
+        provider,
+      });
       setStatus(next);
       const settings = await api.settings();
-      setApiKeyInput(settings.apiKey);
-      setNotice(mockMode ? "已打开本地演示，发送消息不会调用接口。" : "设置已保存。");
+      setDeepseekKey(settings.deepseekApiKey);
+      setOpenaiKey(settings.openaiApiKey);
+      setNotice(mockMode ? "Demo mode is on. Messages are saved locally and no API is called." : "Settings saved.");
       setSettingsOpen(false);
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "保存失败");
+      setSendError(err instanceof Error ? err.message : "Could not save settings.");
     } finally {
       setSavingSettings(false);
     }
@@ -140,18 +173,18 @@ export default function App() {
   async function onExport(id: string) {
     try {
       const path = await api.exportSession(id);
-      setNotice(api.isTauri() ? `已导出到 ${path}` : `已开始下载 ${path}`);
+      setNotice(api.isTauri() ? `Exported to ${path}` : `Downloading ${path}`);
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "导出失败");
+      setSendError(err instanceof Error ? err.message : "Export failed.");
     }
   }
 
   async function onExportAll() {
     try {
       const path = await api.exportAll();
-      setNotice(api.isTauri() ? `已导出到 ${path}` : `已开始下载 ${path}`);
+      setNotice(api.isTauri() ? `Exported to ${path}` : `Downloading ${path}`);
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "导出失败");
+      setSendError(err instanceof Error ? err.message : "Export failed.");
     }
   }
 
@@ -159,22 +192,30 @@ export default function App() {
     try {
       await api.openHistoryDir();
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "无法打开目录");
+      setSendError(err instanceof Error ? err.message : "Could not open the folder.");
     }
   }
 
   const emptyChat = !current || current.messages.length === 0;
   const keyHint = useMemo(() => {
     if (!status) return "";
-    if (status.mockMode) return "本地演示中";
-    if (status.hasApiKey) return `已配置密钥（${status.model}）`;
-    return "未配置密钥";
-  }, [status]);
+    if (status.mockMode) return "Demo mode";
+    const ready = provider === "openai" ? status.hasOpenaiKey : status.hasDeepseekKey;
+    return ready ? "Ready" : "API key needed";
+  }, [status, provider]);
+
+  const placeholder = useMemo(() => {
+    if (!status) return "Write a message";
+    const ready = status.mockMode || (provider === "openai" ? status.hasOpenaiKey : status.hasDeepseekKey);
+    return ready
+      ? "Write a message. Enter to send, Shift+Enter for a new line."
+      : "Add an API key in Settings, or turn on Demo mode.";
+  }, [status, provider]);
 
   if (bootError) {
     return (
       <div className="boot-error">
-        <h1>无法启动</h1>
+        <h1>Could not start</h1>
         <p>{bootError}</p>
       </div>
     );
@@ -183,7 +224,7 @@ export default function App() {
   if (!status || !current) {
     return (
       <div className="boot-loading" role="status">
-        正在载入聊天记录…
+        Loading transcripts…
       </div>
     );
   }
@@ -193,19 +234,19 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
           <div>
-            <p className="eyebrow">姚唐</p>
-            <h1>DeepSeek 聊天</h1>
+            <p className="eyebrow">YAO TANG</p>
+            <h1>Chat</h1>
           </div>
           <button className="ghost" type="button" onClick={startNew}>
-            新对话
+            New chat
           </button>
         </div>
         <p className="path-hint" title={status.historyDir}>
-          记录目录：{status.historyDir}
+          Transcripts: {status.historyDir}
         </p>
-        <nav className="session-list" aria-label="聊天记录">
+        <nav className="session-list" aria-label="Chat history">
           {sessions.length === 0 ? (
-            <p className="muted">还没有保存的对话。</p>
+            <p className="muted">No saved conversations yet.</p>
           ) : (
             sessions.map((item) => (
               <button
@@ -216,7 +257,7 @@ export default function App() {
               >
                 <span className="session-title">{item.title}</span>
                 <span className="session-meta">
-                  {item.messageCount} 条 · {formatTime(item.updatedAt)}
+                  {providerLabel(item.provider)} · {item.messageCount} · {formatTime(item.updatedAt)}
                 </span>
               </button>
             ))
@@ -224,13 +265,13 @@ export default function App() {
         </nav>
         <div className="sidebar-actions">
           <button type="button" onClick={() => setHistoryOpen(true)}>
-            查看聊天记录
+            View transcripts
           </button>
           <button type="button" onClick={onExportAll}>
-            导出全部
+            Export all
           </button>
           <button type="button" onClick={() => setSettingsOpen(true)}>
-            设置
+            Settings
           </button>
         </div>
       </aside>
@@ -240,23 +281,34 @@ export default function App() {
           <button
             className="menu"
             type="button"
-            aria-label="打开会话列表"
+            aria-label="Open conversation list"
             onClick={() => setSidebarOpen((v) => !v)}
           >
-            菜单
+            Menu
           </button>
           <div>
             <h2>{current.title}</h2>
             <p>
-              模型 {status.model} · {keyHint}
+              {providerLabel(provider)} · {keyHint}
             </p>
           </div>
+          <label className="provider-pick">
+            <span>Provider</span>
+            <select
+              value={provider}
+              onChange={(e) => void persistProvider(e.target.value as ProviderId)}
+              aria-label="Chat provider"
+            >
+              <option value="deepseek">DeepSeek</option>
+              <option value="openai">ChatGPT</option>
+            </select>
+          </label>
           <div className="top-actions">
             <button type="button" onClick={() => onExport(current.id)}>
-              导出本段
+              Export
             </button>
             <button type="button" className="danger" onClick={() => onDelete(current.id)}>
-              删除
+              Delete
             </button>
           </div>
         </header>
@@ -265,7 +317,7 @@ export default function App() {
           <div className="banner ok" role="status">
             <span>{notice}</span>
             <button type="button" onClick={() => setNotice(null)}>
-              关闭
+              Dismiss
             </button>
           </div>
         ) : null}
@@ -273,7 +325,7 @@ export default function App() {
           <div className="banner err" role="alert">
             <span>{sendError}</span>
             <button type="button" onClick={() => setSendError(null)}>
-              关闭
+              Dismiss
             </button>
           </div>
         ) : null}
@@ -281,14 +333,15 @@ export default function App() {
         <div className="messages" ref={scroller}>
           {emptyChat ? (
             <div className="empty">
-              <p>还没有消息。</p>
-              <p>写一句中文，开始和 DeepSeek Flash 对话。每轮都会写入本机聊天记录。</p>
+              <p>No messages yet.</p>
+              <p>Choose DeepSeek or ChatGPT, then send a message. Every turn is saved to the local transcript.</p>
             </div>
           ) : (
             current.messages.map((msg) => (
               <article key={msg.id} className={`bubble ${msg.role}`}>
                 <header>
-                  {msg.role === "user" ? "你" : "助手"} · {formatTime(msg.createdAt)}
+                  {msg.role === "user" ? "You" : "Assistant"}
+                  {msg.provider ? ` · ${providerLabel(msg.provider)}` : ""} · {formatTime(msg.createdAt)}
                 </header>
                 <p>{msg.content}</p>
               </article>
@@ -296,8 +349,8 @@ export default function App() {
           )}
           {loading ? (
             <article className="bubble assistant pending" aria-live="polite">
-              <header>助手</header>
-              <p>正在回复…</p>
+              <header>Assistant · {providerLabel(provider)}</header>
+              <p>Thinking…</p>
             </article>
           ) : null}
         </div>
@@ -306,11 +359,7 @@ export default function App() {
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={
-              status.hasApiKey || status.mockMode
-                ? "输入消息，Enter 发送，Shift+Enter 换行"
-                : "尚未配置密钥：发送会提示错误，或先打开本地演示"
-            }
+            placeholder={placeholder}
             rows={3}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -320,7 +369,7 @@ export default function App() {
             }}
           />
           <button type="submit" disabled={loading || !draft.trim()}>
-            {loading ? "发送中…" : "发送"}
+            {loading ? "Sending…" : "Send"}
           </button>
         </form>
       </main>
@@ -329,7 +378,7 @@ export default function App() {
         <button
           className="backdrop"
           type="button"
-          aria-label="关闭侧栏"
+          aria-label="Close sidebar"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
@@ -337,17 +386,37 @@ export default function App() {
       {settingsOpen ? (
         <div className="modal" role="dialog" aria-labelledby="settings-title">
           <form className="panel" onSubmit={onSaveSettings}>
-            <h3 id="settings-title">设置</h3>
+            <h3 id="settings-title">Settings</h3>
             <p>
-              密钥保存在本机配置文件，不会提交到仓库。也可使用环境变量{" "}
-              <code>DEEPSEEK_API_KEY</code>。
+              Keys are stored on this device and are never committed to git. You can also set{" "}
+              <code>DEEPSEEK_API_KEY</code> and <code>OPENAI_API_KEY</code>.
             </p>
             <label>
-              DeepSeek API 密钥
+              Default provider
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as ProviderId)}
+              >
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai">ChatGPT</option>
+              </select>
+            </label>
+            <label>
+              DeepSeek API key
               <input
                 type="password"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
+                value={deepseekKey}
+                onChange={(e) => setDeepseekKey(e.target.value)}
+                placeholder="sk-…"
+                autoComplete="off"
+              />
+            </label>
+            <label>
+              OpenAI API key
+              <input
+                type="password"
+                value={openaiKey}
+                onChange={(e) => setOpenaiKey(e.target.value)}
                 placeholder="sk-…"
                 autoComplete="off"
               />
@@ -358,20 +427,19 @@ export default function App() {
                 checked={mockMode}
                 onChange={(e) => setMockMode(e.target.checked)}
               />
-              本地演示（不调用接口，仍写入聊天记录）
+              Demo mode (no API calls; transcripts still save)
             </label>
-            <p className="muted">当前模型：{status.model}（非思考模式，最低价 Flash）</p>
             {api.isTauri() ? (
               <button type="button" className="ghost" onClick={onOpenDir}>
-                打开聊天记录目录
+                Open transcript folder
               </button>
             ) : null}
             <div className="row">
               <button type="button" className="ghost" onClick={() => setSettingsOpen(false)}>
-                取消
+                Cancel
               </button>
               <button type="submit" disabled={savingSettings}>
-                {savingSettings ? "保存中…" : "保存"}
+                {savingSettings ? "Saving…" : "Save"}
               </button>
             </div>
           </form>
@@ -381,15 +449,17 @@ export default function App() {
       {historyOpen ? (
         <div className="modal" role="dialog" aria-labelledby="history-title">
           <div className="panel wide">
-            <h3 id="history-title">聊天记录</h3>
-            <p className="muted">完整会话已写入磁盘（桌面版）或可在此导出。点选一条即可查看全文。</p>
+            <h3 id="history-title">Transcripts</h3>
+            <p className="muted">
+              Full conversations are written to disk in the desktop app, or exported from here.
+            </p>
             <div className="history-list">
               {sessions.map((item) => (
                 <div key={item.id} className="history-item">
                   <div>
                     <strong>{item.title}</strong>
                     <span>
-                      {item.messageCount} 条 · {formatTime(item.updatedAt)}
+                      {providerLabel(item.provider)} · {item.messageCount} messages · {formatTime(item.updatedAt)}
                     </span>
                   </div>
                   <div className="row">
@@ -400,10 +470,10 @@ export default function App() {
                         setHistoryOpen(false);
                       }}
                     >
-                      打开
+                      Open
                     </button>
                     <button type="button" onClick={() => onExport(item.id)}>
-                      导出
+                      Export
                     </button>
                   </div>
                 </div>
@@ -412,21 +482,22 @@ export default function App() {
             {current.messages.length > 0 ? (
               <pre className="transcript">
                 {current.messages
-                  .map(
-                    (m) =>
-                      `${m.role === "user" ? "用户" : "助手"} ${formatTime(m.createdAt)}\n${m.content}`,
-                  )
+                  .map((m) => {
+                    const who = m.role === "user" ? "You" : "Assistant";
+                    const via = m.provider ? ` · ${providerLabel(m.provider)}` : "";
+                    return `${who}${via} ${formatTime(m.createdAt)}\n${m.content}`;
+                  })
                   .join("\n\n")}
               </pre>
             ) : (
-              <p className="muted">当前对话还是空的。</p>
+              <p className="muted">This conversation is empty.</p>
             )}
             <div className="row">
               <button type="button" onClick={onExportAll}>
-                导出全部
+                Export all
               </button>
               <button type="button" className="ghost" onClick={() => setHistoryOpen(false)}>
-                关闭
+                Close
               </button>
             </div>
           </div>

@@ -10,8 +10,7 @@
   --err: #9b2c2c;
   --ok: #215c37;
   --shadow: 0 18px 40px rgba(48, 36, 20, 0.08);
-  font-family: "Iowan Old Style", "Palatino Linotype", "Songti SC", "Source Han Serif SC",
-    "Noto Serif SC", serif;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Georgia", serif;
 }
 
 * {
@@ -170,8 +169,25 @@ button.danger {
   font-size: 0.82rem;
 }
 
-.top-actions {
+.provider-pick {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--muted);
   margin-left: auto;
+}
+
+.provider-pick select,
+.panel select {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.35rem 0.55rem;
+  background: #fff;
+  color: var(--ink);
+}
+
+.top-actions {
   display: flex;
   gap: 0.4rem;
 }

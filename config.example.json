@@ -1,4 +1,6 @@
 {
-  "apiKey": "sk-your-deepseek-api-key",
-  "mockMode": false
+  "deepseekApiKey": "sk-your-deepseek-api-key",
+  "openaiApiKey": "sk-your-openai-api-key",
+  "mockMode": false,
+  "provider": "deepseek"
 }

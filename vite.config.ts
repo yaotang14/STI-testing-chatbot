@@ -25,6 +25,11 @@ export default defineConfig(() => ({
         changeOrigin: true,
         rewrite: (path: string) => path.replace(/^\/deepseek-api/, ""),
       },
+      "/openai-api": {
+        target: "https://api.openai.com",
+        changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^\/openai-api/, ""),
+      },
     },
     watch: {
       ignored: ["**/src-tauri/**"],

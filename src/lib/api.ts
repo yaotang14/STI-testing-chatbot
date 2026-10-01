@@ -1,12 +1,16 @@
-import type { AppSettings, AppStatus, Session, SessionSummary } from "./types";
+import type { AppSettings, AppStatus, ProviderId, Session, SessionSummary } from "./types";
+import { providerLabel } from "./types";
 
-const MODEL = "deepseek-flash";
-const STORE_KEY = "yao-tang-chat-v1";
-const WEB_HISTORY = "浏览器本机存储（可导出 Markdown 文件）";
+const DEEPSEEK_MODEL = "deepseek-flash";
+const OPENAI_MODEL = "gpt-4o-mini";
+const STORE_KEY = "yao-tang-chat-v2";
+const WEB_HISTORY = "Browser storage (export as Markdown)";
 
 type Store = {
-  apiKey: string;
+  deepseekApiKey: string;
+  openaiApiKey: string;
   mockMode: boolean;
+  provider: ProviderId;
   sessions: Record<string, Session>;
 };
 
@@ -23,18 +27,48 @@ function uid(): string {
 }
 
 function emptyStore(): Store {
-  return { apiKey: "", mockMode: false, sessions: {} };
+  return {
+    deepseekApiKey: "",
+    openaiApiKey: "",
+    mockMode: false,
+    provider: "deepseek",
+    sessions: {},
+  };
+}
+
+function normalizeProvider(value: unknown): ProviderId {
+  return value === "openai" ? "openai" : "deepseek";
+}
+
+function modelFor(provider: ProviderId): string {
+  return provider === "openai" ? OPENAI_MODEL : DEEPSEEK_MODEL;
+}
+
+function migrateSession(raw: Session): Session {
+  const provider = normalizeProvider(raw.provider);
+  return {
+    ...raw,
+    provider,
+    model: raw.model || modelFor(provider),
+    messages: raw.messages ?? [],
+  };
 }
 
 function readStore(): Store {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = localStorage.getItem(STORE_KEY) ?? localStorage.getItem("yao-tang-chat-v1");
     if (!raw) return emptyStore();
-    const parsed = JSON.parse(raw) as Store;
+    const parsed = JSON.parse(raw) as Partial<Store> & { apiKey?: string };
+    const sessions: Record<string, Session> = {};
+    for (const [id, session] of Object.entries(parsed.sessions ?? {})) {
+      sessions[id] = migrateSession(session);
+    }
     return {
-      apiKey: parsed.apiKey ?? "",
+      deepseekApiKey: parsed.deepseekApiKey ?? parsed.apiKey ?? "",
+      openaiApiKey: parsed.openaiApiKey ?? "",
       mockMode: Boolean(parsed.mockMode),
-      sessions: parsed.sessions ?? {},
+      provider: normalizeProvider(parsed.provider),
+      sessions,
     };
   } catch {
     return emptyStore();
@@ -47,25 +81,37 @@ function writeStore(store: Store) {
 
 function titleFrom(text: string): string {
   const oneLine = text.trim().replace(/\s+/g, " ");
-  return oneLine.length > 24 ? `${oneLine.slice(0, 24)}…` : oneLine || "未命名对话";
+  return oneLine.length > 24 ? `${oneLine.slice(0, 24)}…` : oneLine || "New chat";
+}
+
+function maskKey(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= 8) return "********";
+  return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`;
+}
+
+function looksMasked(value: string): boolean {
+  return value.includes("…") || value.includes("****");
 }
 
 function sessionToMarkdown(session: Session): string {
+  const provider = providerLabel(session.provider);
   const lines = [
-    `# 聊天记录：${session.title}`,
+    `# Chat transcript: ${session.title}`,
     "",
-    `- 会话编号：${session.id}`,
-    `- 模型：${session.model}`,
-    `- 创建时间：${session.createdAt}`,
-    `- 更新时间：${session.updatedAt}`,
+    `- Session ID: ${session.id}`,
+    `- Provider: ${provider}`,
+    `- Created: ${session.createdAt}`,
+    `- Updated: ${session.updatedAt}`,
     "",
     "---",
     "",
   ];
   for (const msg of session.messages) {
-    const who =
-      msg.role === "user" ? "用户" : msg.role === "assistant" ? "助手" : msg.role;
-    lines.push(`## ${who}（${msg.createdAt}）`, "", msg.content.trim(), "");
+    const who = msg.role === "user" ? "You" : msg.role === "assistant" ? "Assistant" : msg.role;
+    const via = msg.provider ? ` · ${providerLabel(msg.provider)}` : "";
+    lines.push(`## ${who}${via} (${msg.createdAt})`, "", msg.content.trim(), "");
   }
   return lines.join("\n");
 }
@@ -80,15 +126,62 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-function webStatus(): AppStatus {
-  const store = readStore();
+function webStatus(store = readStore()): AppStatus {
   return {
-    hasApiKey: Boolean(store.apiKey.trim()),
+    hasDeepseekKey: Boolean(store.deepseekApiKey.trim()),
+    hasOpenaiKey: Boolean(store.openaiApiKey.trim()),
     mockMode: store.mockMode,
-    model: MODEL,
+    provider: store.provider,
     historyDir: WEB_HISTORY,
-    keySource: store.apiKey.trim() ? "file" : "none",
   };
+}
+
+function historyMessages(messages: Session["messages"]) {
+  return [
+    {
+      role: "system",
+      content: "You are a helpful assistant. Answer clearly and concisely.",
+    },
+    ...messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role, content: m.content })),
+  ];
+}
+
+async function callProvider(
+  provider: ProviderId,
+  apiKey: string,
+  history: Session["messages"],
+): Promise<string> {
+  const url =
+    provider === "openai" ? "/openai-api/v1/chat/completions" : "/deepseek-api/chat/completions";
+  const body: Record<string, unknown> = {
+    model: modelFor(provider),
+    messages: historyMessages(history),
+    stream: false,
+  };
+  if (provider === "deepseek") {
+    body.thinking = { type: "disabled" };
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = (await res.json()) as {
+    error?: { message?: string };
+    choices?: { message?: { content?: string } }[];
+  };
+  if (data.error?.message) throw new Error(data.error.message);
+  if (!res.ok) throw new Error(`${providerLabel(provider)} request failed (HTTP ${res.status})`);
+  const text = data.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("The model returned no text.");
+  return text;
 }
 
 async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -96,24 +189,23 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
 
   switch (cmd) {
     case "get_status":
-      return webStatus() as T;
-    case "get_settings": {
-      const key = store.apiKey.trim();
-      const masked =
-        key.length === 0
-          ? ""
-          : key.length <= 8
-            ? "********"
-            : `${key.slice(0, 4)}…${key.slice(-4)}`;
-      return { apiKey: masked, mockMode: store.mockMode } as T;
-    }
+      return webStatus(store) as T;
+    case "get_settings":
+      return {
+        deepseekApiKey: maskKey(store.deepseekApiKey),
+        openaiApiKey: maskKey(store.openaiApiKey),
+        mockMode: store.mockMode,
+        provider: store.provider,
+      } as T;
     case "save_settings": {
-      const incoming = String(args.apiKey ?? args.api_key ?? "");
-      const looksMasked = incoming.includes("…") || incoming.includes("****");
-      if (!looksMasked) store.apiKey = incoming.trim();
+      const deepseek = String(args.deepseekApiKey ?? args.deepseek_api_key ?? "");
+      const openai = String(args.openaiApiKey ?? args.openai_api_key ?? "");
+      if (!looksMasked(deepseek)) store.deepseekApiKey = deepseek.trim();
+      if (!looksMasked(openai)) store.openaiApiKey = openai.trim();
       store.mockMode = Boolean(args.mockMode ?? args.mock_mode);
+      store.provider = normalizeProvider(args.provider);
       writeStore(store);
-      return webStatus() as T;
+      return webStatus(store) as T;
     }
     case "list_sessions": {
       const items: SessionSummary[] = Object.values(store.sessions).map((s) => ({
@@ -121,17 +213,20 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
         title: s.title,
         updatedAt: s.updatedAt,
         messageCount: s.messages.length,
+        provider: s.provider,
       }));
       items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       return items as T;
     }
     case "create_session": {
+      const provider = normalizeProvider(args.provider ?? store.provider);
       const session: Session = {
         id: uid(),
-        title: "新对话",
+        title: "New chat",
         createdAt: nowIso(),
         updatedAt: nowIso(),
-        model: MODEL,
+        provider,
+        model: modelFor(provider),
         messages: [],
       };
       store.sessions[session.id] = session;
@@ -140,7 +235,17 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
     }
     case "load_session": {
       const session = store.sessions[String(args.id)];
-      if (!session) throw new Error("找不到该聊天记录");
+      if (!session) throw new Error("Chat transcript not found.");
+      return migrateSession(session) as T;
+    }
+    case "set_session_provider": {
+      const session = store.sessions[String(args.id)];
+      if (!session) throw new Error("Chat transcript not found.");
+      const provider = normalizeProvider(args.provider);
+      session.provider = provider;
+      session.model = modelFor(provider);
+      session.updatedAt = nowIso();
+      writeStore(store);
       return session as T;
     }
     case "delete_session": {
@@ -150,8 +255,8 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
     }
     case "export_session": {
       const session = store.sessions[String(args.id)];
-      if (!session) throw new Error("找不到该聊天记录");
-      const name = `聊天记录_${session.title.replace(/[^\w\u4e00-\u9fa5]+/g, "_").slice(0, 24)}.md`;
+      if (!session) throw new Error("Chat transcript not found.");
+      const name = `transcript_${session.title.replace(/[^\w]+/g, "_").slice(0, 24)}.md`;
       downloadText(name, sessionToMarkdown(session));
       return name as T;
     }
@@ -160,43 +265,48 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
         b.updatedAt.localeCompare(a.updatedAt),
       );
       const body =
-        "# 全部聊天记录\n\n" +
-        (all.length === 0
-          ? "（暂无记录）\n"
-          : all.map(sessionToMarkdown).join("\n\n"));
-      const name = `全部聊天记录_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`;
+        "# All chat transcripts\n\n" +
+        (all.length === 0 ? "(No transcripts yet)\n" : all.map(sessionToMarkdown).join("\n\n"));
+      const name = `all_transcripts_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`;
       downloadText(name, body);
       return name as T;
     }
     case "open_history_dir":
-      throw new Error("浏览器预览无法打开系统目录，请使用「导出」下载聊天记录。");
+      throw new Error("The browser preview cannot open a system folder. Use Export to download transcripts.");
     case "send_message": {
       const id = String(args.sessionId ?? args.session_id);
       const content = String(args.content ?? "").trim();
-      if (!content) throw new Error("请输入要发送的内容");
+      if (!content) throw new Error("Enter a message to send.");
       const session = store.sessions[id];
-      if (!session) throw new Error("找不到该聊天记录");
+      if (!session) throw new Error("Chat transcript not found.");
+      const provider = normalizeProvider(args.provider ?? session.provider ?? store.provider);
+      session.provider = provider;
+      session.model = modelFor(provider);
       if (session.messages.length === 0) session.title = titleFrom(content);
       session.messages.push({
         id: uid(),
         role: "user",
         content,
         createdAt: nowIso(),
+        provider,
+        model: modelFor(provider),
       });
       session.updatedAt = nowIso();
       writeStore(store);
 
       let reply: string;
       if (store.mockMode) {
-        reply = `（本地演示，未调用 DeepSeek）我已记下你的话：「${content.slice(0, 80)}」。这条回复会写入本机聊天记录，可导出查看。`;
+        reply = `(Demo mode — ${providerLabel(provider)} was not called.) I saved your message: “${content.slice(0, 80)}”. This reply is stored in the local transcript.`;
       } else {
-        const key = store.apiKey.trim();
+        const key =
+          provider === "openai" ? store.openaiApiKey.trim() : store.deepseekApiKey.trim();
         if (!key) {
+          const envName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
           throw new Error(
-            "尚未配置 DeepSeek API 密钥。请在设置中填写，或设置环境变量 DEEPSEEK_API_KEY。也可以打开「本地演示」在没有密钥时试用界面和聊天记录。",
+            `No API key is configured for ${providerLabel(provider)}. Add it in Settings or set ${envName}. You can also enable Demo mode to try the app without a key.`,
           );
         }
-        reply = await callDeepSeek(key, session.messages);
+        reply = await callProvider(provider, key, session.messages);
       }
 
       session.messages.push({
@@ -204,53 +314,16 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
         role: "assistant",
         content: reply,
         createdAt: nowIso(),
+        provider,
+        model: modelFor(provider),
       });
       session.updatedAt = nowIso();
       writeStore(store);
       return session as T;
     }
     default:
-      throw new Error(`未知命令：${cmd}`);
+      throw new Error(`Unknown command: ${cmd}`);
   }
-}
-
-async function callDeepSeek(
-  apiKey: string,
-  history: Session["messages"],
-): Promise<string> {
-  const messages = [
-    {
-      role: "system",
-      content: "你是姚唐的中文助手，回答简洁、准确、口语自然。",
-    },
-    ...history
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, content: m.content })),
-  ];
-
-  const res = await fetch("/deepseek-api/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      stream: false,
-      thinking: { type: "disabled" },
-    }),
-  });
-
-  const data = (await res.json()) as {
-    error?: { message?: string };
-    choices?: { message?: { content?: string } }[];
-  };
-  if (data.error?.message) throw new Error(data.error.message);
-  if (!res.ok) throw new Error(`DeepSeek 请求失败（HTTP ${res.status}）`);
-  const text = data.choices?.[0]?.message?.content?.trim();
-  if (!text) throw new Error("模型没有返回文本");
-  return text;
 }
 
 async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -264,16 +337,34 @@ async function invokeCmd<T>(cmd: string, args?: Record<string, unknown>): Promis
 export const api = {
   status: () => invokeCmd<AppStatus>("get_status"),
   settings: () => invokeCmd<AppSettings>("get_settings"),
-  saveSettings: (apiKey: string, mockMode: boolean) =>
-    invokeCmd<AppStatus>("save_settings", { apiKey, mockMode, api_key: apiKey, mock_mode: mockMode }),
+  saveSettings: (input: {
+    deepseekApiKey: string;
+    openaiApiKey: string;
+    mockMode: boolean;
+    provider: ProviderId;
+  }) =>
+    invokeCmd<AppStatus>("save_settings", {
+      ...input,
+      deepseek_api_key: input.deepseekApiKey,
+      openai_api_key: input.openaiApiKey,
+      mock_mode: input.mockMode,
+    }),
   listSessions: () => invokeCmd<SessionSummary[]>("list_sessions"),
-  createSession: () => invokeCmd<Session>("create_session"),
+  createSession: (provider: ProviderId) =>
+    invokeCmd<Session>("create_session", { provider }),
   loadSession: (id: string) => invokeCmd<Session>("load_session", { id }),
+  setSessionProvider: (id: string, provider: ProviderId) =>
+    invokeCmd<Session>("set_session_provider", { id, provider }),
   deleteSession: (id: string) => invokeCmd<void>("delete_session", { id }),
   exportSession: (id: string) => invokeCmd<string>("export_session", { id }),
   exportAll: () => invokeCmd<string>("export_all_sessions"),
   openHistoryDir: () => invokeCmd<void>("open_history_dir"),
-  sendMessage: (sessionId: string, content: string) =>
-    invokeCmd<Session>("send_message", { sessionId, session_id: sessionId, content }),
+  sendMessage: (sessionId: string, content: string, provider: ProviderId) =>
+    invokeCmd<Session>("send_message", {
+      sessionId,
+      session_id: sessionId,
+      content,
+      provider,
+    }),
   isTauri,
 };
