@@ -39,7 +39,7 @@ Windows：`%APPDATA%\com.yaotang.deepseekchat\`
 
 ## 开发运行
 
-需要：Node.js 18+、Rust（[rustup](https://rustup.rs/)）。桌面窗口另需各系统的 [Tauri 依赖](https://v2.tauri.app/start/prerequisites/)。
+需要：Node.js 18+、Rust **1.90+**（[rustup](https://rustup.rs/)）。桌面窗口另需各系统的 [Tauri 依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
 npm install
@@ -63,7 +63,12 @@ npm install
 npm run build:installer
 ```
 
-产物在 `src-tauri/target/release/bundle/`：
+产物在 `src-tauri/target/release/bundle/`（安装包是本地构建结果，不纳入 Git）。在 Linux 上会生成例如：
+
+- `src-tauri/target/release/bundle/deb/姚唐DeepSeek聊天_0.1.0_amd64.deb`
+- `src-tauri/target/release/bundle/appimage/姚唐DeepSeek聊天_0.1.0_amd64.AppImage`
+
+其它目标系统：
 
 | 系统 | 本仓库已配置的安装包 |
 | --- | --- |
