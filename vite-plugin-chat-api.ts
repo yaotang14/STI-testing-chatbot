@@ -6,6 +6,7 @@ const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 type ChatBody = {
   provider?: string;
   apiKey?: string;
+  model?: string;
   messages?: { role: string; content: string }[];
 };
 
@@ -71,9 +72,11 @@ async function handleChat(req: NodeReq, res: NodeRes) {
     return;
   }
 
+  const fallback = provider === "openai" ? "gpt-4o-mini" : "deepseek-flash";
+  const model = (parsed.model ?? "").trim() || fallback;
   const url = provider === "openai" ? OPENAI_URL : DEEPSEEK_URL;
   const payload: Record<string, unknown> = {
-    model: provider === "openai" ? "gpt-4o-mini" : "deepseek-flash",
+    model,
     messages: parsed.messages ?? [],
     stream: false,
   };

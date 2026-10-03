@@ -1,8 +1,15 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./lib/api";
 import type { AppStatus, ProviderId, Session, SessionSummary } from "./lib/types";
-import { providerLabel } from "./lib/types";
 import { visiblePlainText } from "./lib/plainText";
+import {
+  MODEL_PRESETS,
+  modelDisplayName,
+  normalizePreset,
+  presetFromModel,
+  resolveModel,
+  type ModelPresetId,
+} from "./lib/models";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -13,6 +20,11 @@ function formatTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(d);
+}
+
+function viaLabel(provider?: string, model?: string): string {
+  const name = modelDisplayName(model, provider);
+  return name;
 }
 
 export default function App() {
@@ -31,9 +43,16 @@ export default function App() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [mockMode, setMockMode] = useState(false);
   const [provider, setProvider] = useState<ProviderId>("deepseek");
+  const [modelPreset, setModelPreset] = useState<ModelPresetId>("deepseek");
+  const [customModelId, setCustomModelId] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const booted = useRef(false);
+
+  const active = useMemo(
+    () => resolveModel(modelPreset, customModelId, provider),
+    [modelPreset, customModelId, provider],
+  );
 
   const refreshList = useCallback(async () => {
     const items = await api.listSessions();
@@ -44,17 +63,52 @@ export default function App() {
   const openSession = useCallback(async (id: string) => {
     const session = await api.loadSession(id);
     setCurrent(session);
-    setProvider((session.provider as ProviderId) === "openai" ? "openai" : "deepseek");
+    const nextProvider = (session.provider as ProviderId) === "openai" ? "openai" : "deepseek";
+    setProvider(nextProvider);
+    const nextPreset = presetFromModel(session.model, nextProvider);
+    setModelPreset(nextPreset);
+    if (nextPreset === "custom" && session.model) {
+      setCustomModelId(session.model);
+    }
     setSendError(null);
     setSidebarOpen(false);
   }, []);
 
+  const persistSettings = useCallback(
+    async (next: {
+      preset: ModelPresetId;
+      custom: string;
+      mock?: boolean;
+      deepseek?: string;
+      openai?: string;
+    }) => {
+      const resolved = resolveModel(next.preset, next.custom, provider);
+      const settings = await api.settings();
+      const s = await api.saveSettings({
+        deepseekApiKey: next.deepseek ?? settings.deepseekApiKey,
+        openaiApiKey: next.openai ?? settings.openaiApiKey,
+        mockMode: next.mock ?? settings.mockMode,
+        provider: resolved.provider,
+        modelPreset: next.preset,
+        modelId: resolved.modelId,
+        customModelId: next.custom.trim(),
+      });
+      setStatus(s);
+      setProvider(resolved.provider);
+      setModelPreset(normalizePreset(s.modelPreset));
+      setCustomModelId(s.customModelId);
+      return resolved;
+    },
+    [provider],
+  );
+
   const startNew = useCallback(async () => {
-    const session = await api.createSession(provider);
+    const resolved = resolveModel(modelPreset, customModelId, provider);
+    const session = await api.createSession(resolved.provider, resolved.modelId || "deepseek-flash");
     setCurrent(session);
     await refreshList();
     setSidebarOpen(false);
-  }, [provider, refreshList]);
+  }, [customModelId, modelPreset, provider, refreshList]);
 
   useEffect(() => {
     if (booted.current) return;
@@ -65,13 +119,22 @@ export default function App() {
         setStatus(s);
         setMockMode(s.mockMode);
         setProvider(s.provider);
+        setModelPreset(normalizePreset(s.modelPreset));
+        setCustomModelId(s.customModelId ?? "");
         const settings = await api.settings();
         setDeepseekKey(settings.deepseekApiKey);
         setOpenaiKey(settings.openaiApiKey);
+        setModelPreset(normalizePreset(settings.modelPreset));
+        setCustomModelId(settings.customModelId);
         const items = await refreshList();
         if (items[0]) await openSession(items[0].id);
         else {
-          const session = await api.createSession(s.provider);
+          const resolved = resolveModel(
+            normalizePreset(s.modelPreset),
+            s.customModelId,
+            s.provider,
+          );
+          const session = await api.createSession(resolved.provider, resolved.modelId || "deepseek-flash");
           setCurrent(session);
           await refreshList();
         }
@@ -85,18 +148,12 @@ export default function App() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [current?.messages.length, loading]);
 
-  async function persistProvider(next: ProviderId) {
-    setProvider(next);
-    const settings = await api.settings();
-    const s = await api.saveSettings({
-      deepseekApiKey: settings.deepseekApiKey,
-      openaiApiKey: settings.openaiApiKey,
-      mockMode: settings.mockMode,
-      provider: next,
-    });
-    setStatus(s);
-    if (current) {
-      const updated = await api.setSessionProvider(current.id, next);
+  async function persistModelChoice(nextPreset: ModelPresetId, nextCustom = customModelId) {
+    setModelPreset(nextPreset);
+    if (nextPreset === "custom") setCustomModelId(nextCustom);
+    const resolved = await persistSettings({ preset: nextPreset, custom: nextCustom });
+    if (current && resolved.modelId) {
+      const updated = await api.setSessionProvider(current.id, resolved.provider, resolved.modelId);
       setCurrent(updated);
       await refreshList();
     }
@@ -107,6 +164,11 @@ export default function App() {
     if (!current || loading) return;
     const text = draft.trim();
     if (!text) return;
+    if (modelPreset === "custom" && !customModelId.trim()) {
+      setSendError("Enter a model id, or choose a preset.");
+      return;
+    }
+    const resolved = resolveModel(modelPreset, customModelId, provider);
     setDraft("");
     setSendError(null);
     setLoading(true);
@@ -119,13 +181,15 @@ export default function App() {
           role: "user",
           content: text,
           createdAt: new Date().toISOString(),
-          provider,
+          provider: resolved.provider,
+          model: resolved.modelId,
         },
       ],
     };
     setCurrent(optimistic);
     try {
-      const updated = await api.sendMessage(current.id, text, provider);
+      await persistSettings({ preset: modelPreset, custom: customModelId });
+      const updated = await api.sendMessage(current.id, text, resolved.provider, resolved.modelId);
       setCurrent(updated);
       await refreshList();
       setStatus(await api.status());
@@ -143,16 +207,21 @@ export default function App() {
     setSavingSettings(true);
     setSendError(null);
     try {
-      const next = await api.saveSettings({
-        deepseekApiKey: deepseekKey,
-        openaiApiKey: openaiKey,
-        mockMode,
-        provider,
+      const resolved = await persistSettings({
+        preset: modelPreset,
+        custom: customModelId,
+        mock: mockMode,
+        deepseek: deepseekKey,
+        openai: openaiKey,
       });
-      setStatus(next);
       const settings = await api.settings();
       setDeepseekKey(settings.deepseekApiKey);
       setOpenaiKey(settings.openaiApiKey);
+      if (current && resolved.modelId) {
+        const updated = await api.setSessionProvider(current.id, resolved.provider, resolved.modelId);
+        setCurrent(updated);
+        await refreshList();
+      }
       setNotice(mockMode ? "Demo mode is on. Messages are saved locally and no API is called." : "Settings saved.");
       setSettingsOpen(false);
     } catch (err) {
@@ -201,17 +270,45 @@ export default function App() {
   const keyHint = useMemo(() => {
     if (!status) return "";
     if (status.mockMode) return "Demo mode";
-    const ready = provider === "openai" ? status.hasOpenaiKey : status.hasDeepseekKey;
+    const ready = active.provider === "openai" ? status.hasOpenaiKey : status.hasDeepseekKey;
     return ready ? "Ready" : "API key needed";
-  }, [status, provider]);
+  }, [status, active.provider]);
 
   const placeholder = useMemo(() => {
     if (!status) return "Write a message";
-    const ready = status.mockMode || (provider === "openai" ? status.hasOpenaiKey : status.hasDeepseekKey);
+    const ready = status.mockMode || (active.provider === "openai" ? status.hasOpenaiKey : status.hasDeepseekKey);
     return ready
       ? "Write a message. Enter to send, Shift+Enter for a new line."
       : "Add an API key in Settings, or turn on Demo mode.";
-  }, [status, provider]);
+  }, [status, active.provider]);
+
+  const modelControls = (
+    <label className="provider-pick">
+      <span>Model</span>
+      <select
+        value={modelPreset}
+        onChange={(e) => void persistModelChoice(e.target.value as ModelPresetId)}
+        aria-label="Chat model"
+      >
+        {MODEL_PRESETS.map((preset) => (
+          <option key={preset.id} value={preset.id}>
+            {preset.label}
+          </option>
+        ))}
+      </select>
+      {modelPreset === "custom" ? (
+        <input
+          className="custom-model"
+          value={customModelId}
+          onChange={(e) => setCustomModelId(e.target.value)}
+          onBlur={() => void persistModelChoice("custom", customModelId)}
+          placeholder="Model id, e.g. gpt-4.1"
+          aria-label="Custom model id"
+          autoComplete="off"
+        />
+      ) : null}
+    </label>
+  );
 
   if (bootError) {
     return (
@@ -257,7 +354,7 @@ export default function App() {
               >
                 <span className="session-title">{item.title}</span>
                 <span className="session-meta">
-                  {providerLabel(item.provider)} · {item.messageCount} · {formatTime(item.updatedAt)}
+                  {viaLabel(item.provider, item.model)} · {item.messageCount} · {formatTime(item.updatedAt)}
                 </span>
               </button>
             ))
@@ -289,20 +386,10 @@ export default function App() {
           <div>
             <h2>{current.title}</h2>
             <p>
-              {providerLabel(provider)} · {keyHint}
+              {viaLabel(active.provider, active.modelId || current.model)} · {keyHint}
             </p>
           </div>
-          <label className="provider-pick">
-            <span>Provider</span>
-            <select
-              value={provider}
-              onChange={(e) => void persistProvider(e.target.value as ProviderId)}
-              aria-label="Chat provider"
-            >
-              <option value="deepseek">DeepSeek</option>
-              <option value="openai">ChatGPT</option>
-            </select>
-          </label>
+          {modelControls}
           <div className="top-actions">
             <button type="button" onClick={() => onExport(current.id)}>
               Export
@@ -334,14 +421,14 @@ export default function App() {
           {emptyChat ? (
             <div className="empty">
               <p>No messages yet.</p>
-              <p>Choose DeepSeek or ChatGPT, then send a message. Every turn is saved to the local transcript.</p>
+              <p>Choose a model, then send a message. Every turn is saved to the local transcript with the model id.</p>
             </div>
           ) : (
             current.messages.map((msg) => (
               <article key={msg.id} className={`bubble ${msg.role}`}>
                 <header>
                   {msg.role === "user" ? "You" : "Assistant"}
-                  {msg.provider ? ` · ${providerLabel(msg.provider)}` : ""} · {formatTime(msg.createdAt)}
+                  {msg.model || msg.provider ? ` · ${viaLabel(msg.provider, msg.model)}` : ""} · {formatTime(msg.createdAt)}
                 </header>
                 <p>{visiblePlainText(msg.content)}</p>
               </article>
@@ -349,7 +436,7 @@ export default function App() {
           )}
           {loading ? (
             <article className="bubble assistant pending" aria-live="polite">
-              <header>Assistant · {providerLabel(provider)}</header>
+              <header>Assistant · {viaLabel(active.provider, active.modelId)}</header>
               <p>Thinking…</p>
             </article>
           ) : null}
@@ -392,15 +479,31 @@ export default function App() {
               <code>DEEPSEEK_API_KEY</code> and <code>OPENAI_API_KEY</code>.
             </p>
             <label>
-              Default provider
+              Default model
               <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value as ProviderId)}
+                value={modelPreset}
+                onChange={(e) => setModelPreset(e.target.value as ModelPresetId)}
               >
-                <option value="deepseek">DeepSeek</option>
-                <option value="openai">ChatGPT</option>
+                {MODEL_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
               </select>
             </label>
+            {modelPreset === "custom" ? (
+              <label>
+                Custom model id
+                <input
+                  value={customModelId}
+                  onChange={(e) => setCustomModelId(e.target.value)}
+                  placeholder="Any provider model id"
+                  autoComplete="off"
+                />
+              </label>
+            ) : (
+              <p className="muted">Sends as {active.modelId || "the selected model"}.</p>
+            )}
             <label>
               DeepSeek API key
               <input
@@ -459,7 +562,7 @@ export default function App() {
                   <div>
                     <strong>{item.title}</strong>
                     <span>
-                      {providerLabel(item.provider)} · {item.messageCount} messages · {formatTime(item.updatedAt)}
+                      {viaLabel(item.provider, item.model)} · {item.messageCount} messages · {formatTime(item.updatedAt)}
                     </span>
                   </div>
                   <div className="row">
@@ -484,7 +587,7 @@ export default function App() {
                 {current.messages
                   .map((m) => {
                     const who = m.role === "user" ? "You" : "Assistant";
-                    const via = m.provider ? ` · ${providerLabel(m.provider)}` : "";
+                    const via = m.model || m.provider ? ` · ${viaLabel(m.provider, m.model)}` : "";
                     return `${who}${via} ${formatTime(m.createdAt)}\n${visiblePlainText(m.content)}`;
                   })
                   .join("\n\n")}

@@ -1,8 +1,15 @@
 import type { AppSettings, AppStatus, ProviderId, Session, SessionSummary } from "./types";
 import { providerLabel } from "./types";
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PRESET,
+  inferProvider,
+  modelDisplayName,
+  normalizePreset,
+  resolveModel,
+  type ModelPresetId,
+} from "./models";
 
-const DEEPSEEK_MODEL = "deepseek-flash";
-const OPENAI_MODEL = "gpt-4o-mini";
 const STORE_KEY = "sti-testing-chat-v1";
 const WEB_HISTORY = "Browser storage (export as Markdown)";
 
@@ -11,6 +18,9 @@ type Store = {
   openaiApiKey: string;
   mockMode: boolean;
   provider: ProviderId;
+  modelPreset: ModelPresetId;
+  modelId: string;
+  customModelId: string;
   sessions: Record<string, Session>;
 };
 
@@ -32,6 +42,9 @@ function emptyStore(): Store {
     openaiApiKey: "",
     mockMode: false,
     provider: "deepseek",
+    modelPreset: DEFAULT_PRESET,
+    modelId: DEFAULT_MODEL_ID,
+    customModelId: "",
     sessions: {},
   };
 }
@@ -40,16 +53,12 @@ function normalizeProvider(value: unknown): ProviderId {
   return value === "openai" ? "openai" : "deepseek";
 }
 
-function modelFor(provider: ProviderId): string {
-  return provider === "openai" ? OPENAI_MODEL : DEEPSEEK_MODEL;
-}
-
 function migrateSession(raw: Session): Session {
   const provider = normalizeProvider(raw.provider);
   return {
     ...raw,
     provider,
-    model: raw.model || modelFor(provider),
+    model: raw.model || (provider === "openai" ? "gpt-4o-mini" : DEFAULT_MODEL_ID),
     messages: raw.messages ?? [],
   };
 }
@@ -71,6 +80,9 @@ function readStore(): Store {
       openaiApiKey: parsed.openaiApiKey ?? "",
       mockMode: Boolean(parsed.mockMode),
       provider: normalizeProvider(parsed.provider),
+      modelPreset: normalizePreset(parsed.modelPreset),
+      modelId: parsed.modelId || DEFAULT_MODEL_ID,
+      customModelId: parsed.customModelId ?? "",
       sessions,
     };
   } catch {
@@ -105,6 +117,7 @@ function sessionToMarkdown(session: Session): string {
     "",
     `- Session ID: ${session.id}`,
     `- Provider: ${provider}`,
+    `- Model: ${session.model}`,
     `- Created: ${session.createdAt}`,
     `- Updated: ${session.updatedAt}`,
     "",
@@ -113,8 +126,13 @@ function sessionToMarkdown(session: Session): string {
   ];
   for (const msg of session.messages) {
     const who = msg.role === "user" ? "You" : msg.role === "assistant" ? "Assistant" : msg.role;
-    const via = msg.provider ? ` · ${providerLabel(msg.provider)}` : "";
-    lines.push(`## ${who}${via} (${msg.createdAt})`, "", msg.content.trim(), "");
+    const via = [
+      msg.provider ? providerLabel(msg.provider) : "",
+      msg.model ? msg.model : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`## ${who}${via ? ` · ${via}` : ""} (${msg.createdAt})`, "", msg.content.trim(), "");
   }
   return lines.join("\n");
 }
@@ -135,6 +153,9 @@ function webStatus(store = readStore()): AppStatus {
     hasOpenaiKey: Boolean(store.openaiApiKey.trim()),
     mockMode: store.mockMode,
     provider: store.provider,
+    modelPreset: store.modelPreset,
+    modelId: store.modelId,
+    customModelId: store.customModelId,
     historyDir: WEB_HISTORY,
   };
 }
@@ -155,6 +176,7 @@ async function callProvider(
   provider: ProviderId,
   apiKey: string,
   history: Session["messages"],
+  modelId: string,
 ): Promise<string> {
   let res: Response;
   try {
@@ -164,6 +186,7 @@ async function callProvider(
       body: JSON.stringify({
         provider,
         apiKey,
+        model: modelId,
         messages: historyMessages(history),
       }),
     });
@@ -201,6 +224,9 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
         openaiApiKey: maskKey(store.openaiApiKey),
         mockMode: store.mockMode,
         provider: store.provider,
+        modelPreset: store.modelPreset,
+        modelId: store.modelId,
+        customModelId: store.customModelId,
       } as T;
     case "save_settings": {
       const deepseek = String(args.deepseekApiKey ?? args.deepseek_api_key ?? "");
@@ -208,7 +234,12 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
       if (!looksMasked(deepseek)) store.deepseekApiKey = deepseek.trim();
       if (!looksMasked(openai)) store.openaiApiKey = openai.trim();
       store.mockMode = Boolean(args.mockMode ?? args.mock_mode);
+      store.modelPreset = normalizePreset(args.modelPreset ?? args.model_preset);
+      store.customModelId = String(args.customModelId ?? args.custom_model_id ?? store.customModelId);
       store.provider = normalizeProvider(args.provider);
+      const resolved = resolveModel(store.modelPreset, store.customModelId, store.provider);
+      store.provider = resolved.provider;
+      store.modelId = resolved.modelId || String(args.modelId ?? args.model_id ?? store.modelId);
       writeStore(store);
       return webStatus(store) as T;
     }
@@ -219,19 +250,22 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
         updatedAt: s.updatedAt,
         messageCount: s.messages.length,
         provider: s.provider,
+        model: s.model,
       }));
       items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       return items as T;
     }
     case "create_session": {
-      const provider = normalizeProvider(args.provider ?? store.provider);
+      const requestedProvider = normalizeProvider(args.provider ?? store.provider);
+      const model = String(args.model ?? args.modelId ?? (store.modelId || DEFAULT_MODEL_ID));
+      const provider = inferProvider(model, requestedProvider);
       const session: Session = {
         id: uid(),
         title: "New chat",
         createdAt: nowIso(),
         updatedAt: nowIso(),
         provider,
-        model: modelFor(provider),
+        model,
         messages: [],
       };
       store.sessions[session.id] = session;
@@ -246,9 +280,10 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
     case "set_session_provider": {
       const session = store.sessions[String(args.id)];
       if (!session) throw new Error("Chat transcript not found.");
-      const provider = normalizeProvider(args.provider);
-      session.provider = provider;
-      session.model = modelFor(provider);
+      const provider = normalizeProvider(args.provider ?? session.provider);
+      const incomingModel = String(args.model ?? args.modelId ?? "").trim();
+      session.model = incomingModel || session.model;
+      session.provider = inferProvider(session.model, provider);
       session.updatedAt = nowIso();
       writeStore(store);
       return session as T;
@@ -285,33 +320,36 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
       const session = store.sessions[id];
       if (!session) throw new Error("Chat transcript not found.");
       const provider = normalizeProvider(args.provider ?? session.provider ?? store.provider);
-      session.provider = provider;
-      session.model = modelFor(provider);
+      const model = String(args.model ?? session.model ?? (store.modelId || DEFAULT_MODEL_ID)).trim();
+      if (!model) throw new Error("Enter a model id.");
+      const resolvedProvider = inferProvider(model, provider);
+      session.provider = resolvedProvider;
+      session.model = model;
       if (session.messages.length === 0) session.title = titleFrom(content);
       session.messages.push({
         id: uid(),
         role: "user",
         content,
         createdAt: nowIso(),
-        provider,
-        model: modelFor(provider),
+        provider: resolvedProvider,
+        model,
       });
       session.updatedAt = nowIso();
       writeStore(store);
 
       let reply: string;
       if (store.mockMode) {
-        reply = `(Demo mode — ${providerLabel(provider)} was not called.) I saved your message: “${content.slice(0, 80)}”. This reply is stored in the local transcript.`;
+        reply = `(Demo mode — ${modelDisplayName(model, resolvedProvider)} was not called.) I saved your message: “${content.slice(0, 80)}”. This reply is stored in the local transcript.`;
       } else {
         const key =
-          provider === "openai" ? store.openaiApiKey.trim() : store.deepseekApiKey.trim();
+          resolvedProvider === "openai" ? store.openaiApiKey.trim() : store.deepseekApiKey.trim();
         if (!key) {
-          const envName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
+          const envName = resolvedProvider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
           throw new Error(
-            `No API key is configured for ${providerLabel(provider)}. Add it in Settings or set ${envName}. You can also enable Demo mode to try the app without a key.`,
+            `No API key is configured for ${providerLabel(resolvedProvider)}. Add it in Settings or set ${envName}. You can also enable Demo mode to try the app without a key.`,
           );
         }
-        reply = await callProvider(provider, key, session.messages);
+        reply = await callProvider(resolvedProvider, key, session.messages, model);
       }
 
       session.messages.push({
@@ -319,8 +357,8 @@ async function webInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Pr
         role: "assistant",
         content: reply,
         createdAt: nowIso(),
-        provider,
-        model: modelFor(provider),
+        provider: session.provider,
+        model,
       });
       session.updatedAt = nowIso();
       writeStore(store);
@@ -347,29 +385,36 @@ export const api = {
     openaiApiKey: string;
     mockMode: boolean;
     provider: ProviderId;
+    modelPreset: string;
+    modelId: string;
+    customModelId: string;
   }) =>
     invokeCmd<AppStatus>("save_settings", {
       ...input,
       deepseek_api_key: input.deepseekApiKey,
       openai_api_key: input.openaiApiKey,
       mock_mode: input.mockMode,
+      model_preset: input.modelPreset,
+      model_id: input.modelId,
+      custom_model_id: input.customModelId,
     }),
   listSessions: () => invokeCmd<SessionSummary[]>("list_sessions"),
-  createSession: (provider: ProviderId) =>
-    invokeCmd<Session>("create_session", { provider }),
+  createSession: (provider: ProviderId, model: string) =>
+    invokeCmd<Session>("create_session", { provider, model }),
   loadSession: (id: string) => invokeCmd<Session>("load_session", { id }),
-  setSessionProvider: (id: string, provider: ProviderId) =>
-    invokeCmd<Session>("set_session_provider", { id, provider }),
+  setSessionProvider: (id: string, provider: ProviderId, model: string) =>
+    invokeCmd<Session>("set_session_provider", { id, provider, model }),
   deleteSession: (id: string) => invokeCmd<void>("delete_session", { id }),
   exportSession: (id: string) => invokeCmd<string>("export_session", { id }),
   exportAll: () => invokeCmd<string>("export_all_sessions"),
   openHistoryDir: () => invokeCmd<void>("open_history_dir"),
-  sendMessage: (sessionId: string, content: string, provider: ProviderId) =>
+  sendMessage: (sessionId: string, content: string, provider: ProviderId, model: string) =>
     invokeCmd<Session>("send_message", {
       sessionId,
       session_id: sessionId,
       content,
       provider,
+      model,
     }),
   isTauri,
 };

@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 const DEEPSEEK_MODEL: &str = "deepseek-flash";
 const OPENAI_MODEL: &str = "gpt-4o-mini";
+const DEEPSEEK_PRO_MODEL: &str = "deepseek-v4-pro";
+const GPT_LUNA_MODEL: &str = "gpt-6-luna";
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
 const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 
@@ -42,6 +44,14 @@ fn default_provider() -> String {
     "deepseek".into()
 }
 
+fn default_preset() -> String {
+    "deepseek".into()
+}
+
+fn default_model_id() -> String {
+    DEEPSEEK_MODEL.into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -50,6 +60,8 @@ pub struct SessionSummary {
     pub updated_at: String,
     pub message_count: usize,
     pub provider: String,
+    #[serde(default)]
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +71,9 @@ pub struct AppSettings {
     pub openai_api_key: String,
     pub mock_mode: bool,
     pub provider: String,
+    pub model_preset: String,
+    pub model_id: String,
+    pub custom_model_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +83,9 @@ pub struct AppStatus {
     pub has_openai_key: bool,
     pub mock_mode: bool,
     pub provider: String,
+    pub model_preset: String,
+    pub model_id: String,
+    pub custom_model_id: String,
     pub history_dir: String,
 }
 
@@ -84,6 +102,12 @@ struct ConfigFile {
     mock_mode: bool,
     #[serde(default = "default_provider")]
     provider: String,
+    #[serde(default = "default_preset")]
+    model_preset: String,
+    #[serde(default = "default_model_id")]
+    model_id: String,
+    #[serde(default)]
+    custom_model_id: String,
 }
 
 #[derive(Serialize)]
@@ -148,11 +172,54 @@ fn model_for(provider: &str) -> &'static str {
     }
 }
 
+fn infer_provider(model: &str, fallback: &str) -> String {
+    let id = model.trim().to_ascii_lowercase();
+    if id.starts_with("deepseek") {
+        "deepseek".into()
+    } else if id.starts_with("gpt-") || id.starts_with("chatgpt") || id.starts_with("o1") || id.starts_with("o3")
+    {
+        "openai".into()
+    } else {
+        normalize_provider(fallback)
+    }
+}
+
+fn normalize_preset(value: &str) -> String {
+    match value {
+        "deepseek" | "deepseek-pro" | "chatgpt" | "gpt-6-luna" | "custom" => value.into(),
+        _ => default_preset(),
+    }
+}
+
+fn resolve_model(preset: &str, custom_model_id: &str, fallback_provider: &str) -> (String, String) {
+    match preset {
+        "deepseek-pro" => ("deepseek".into(), DEEPSEEK_PRO_MODEL.into()),
+        "chatgpt" => ("openai".into(), OPENAI_MODEL.into()),
+        "gpt-6-luna" => ("openai".into(), GPT_LUNA_MODEL.into()),
+        "custom" => {
+            let model = custom_model_id.trim().to_string();
+            (infer_provider(&model, fallback_provider), model)
+        }
+        _ => ("deepseek".into(), DEEPSEEK_MODEL.into()),
+    }
+}
+
 fn provider_label(provider: &str) -> &'static str {
     if provider == "openai" {
         "ChatGPT"
     } else {
         "DeepSeek"
+    }
+}
+
+fn model_label(model: &str, provider: &str) -> String {
+    match model {
+        "deepseek-flash" => "DeepSeek".into(),
+        "deepseek-v4-pro" => "DeepSeek V4 Pro".into(),
+        "gpt-4o-mini" => "ChatGPT".into(),
+        "gpt-6-luna" => "GPT-6 Luna".into(),
+        other if other.is_empty() => provider_label(provider).into(),
+        other => other.into(),
     }
 }
 
@@ -229,6 +296,9 @@ fn empty_config() -> ConfigFile {
         openai_api_key: String::new(),
         mock_mode: false,
         provider: default_provider(),
+        model_preset: default_preset(),
+        model_id: default_model_id(),
+        custom_model_id: String::new(),
     }
 }
 
@@ -311,6 +381,7 @@ fn session_to_markdown(session: &Session) -> String {
         "- Provider: {}\n",
         provider_label(&session.provider)
     ));
+    out.push_str(&format!("- Model: {}\n", session.model));
     out.push_str(&format!("- Created: {}\n", session.created_at));
     out.push_str(&format!("- Updated: {}\n\n", session.updated_at));
     out.push_str("---\n\n");
@@ -321,10 +392,16 @@ fn session_to_markdown(session: &Session) -> String {
             "system" => "System",
             other => other,
         };
-        let via = if msg.provider.is_empty() {
+        let mut via_parts: Vec<String> = Vec::new();
+        if !msg.model.is_empty() {
+            via_parts.push(model_label(&msg.model, &msg.provider));
+        } else if !msg.provider.is_empty() {
+            via_parts.push(provider_label(&msg.provider).into());
+        }
+        let via = if via_parts.is_empty() {
             String::new()
         } else {
-            format!(" · {}", provider_label(&msg.provider))
+            format!(" · {}", via_parts.join(" · "))
         };
         out.push_str(&format!("## {}{} ({})\n\n", who, via, msg.created_at));
         out.push_str(msg.content.trim());
@@ -349,11 +426,19 @@ fn title_from_text(text: &str) -> String {
 #[tauri::command]
 fn get_status(app: AppHandle) -> Result<AppStatus, String> {
     let cfg = read_config_file(&app);
+    let (provider, model_id) = resolve_model(&cfg.model_preset, &cfg.custom_model_id, &cfg.provider);
     Ok(AppStatus {
         has_deepseek_key: !resolve_deepseek_key(&app).is_empty(),
         has_openai_key: !resolve_openai_key(&app).is_empty(),
         mock_mode: cfg.mock_mode,
-        provider: normalize_provider(&cfg.provider),
+        provider,
+        model_preset: normalize_preset(&cfg.model_preset),
+        model_id: if cfg.model_id.is_empty() {
+            model_id
+        } else {
+            cfg.model_id.clone()
+        },
+        custom_model_id: cfg.custom_model_id.clone(),
         history_dir: sessions_dir(&app)?.display().to_string(),
     })
 }
@@ -361,11 +446,19 @@ fn get_status(app: AppHandle) -> Result<AppStatus, String> {
 #[tauri::command]
 fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     let cfg = read_config_file(&app);
+    let (provider, model_id) = resolve_model(&cfg.model_preset, &cfg.custom_model_id, &cfg.provider);
     Ok(AppSettings {
         deepseek_api_key: mask_key(&resolve_deepseek_key(&app)),
         openai_api_key: mask_key(&resolve_openai_key(&app)),
         mock_mode: cfg.mock_mode,
-        provider: normalize_provider(&cfg.provider),
+        provider,
+        model_preset: normalize_preset(&cfg.model_preset),
+        model_id: if cfg.model_id.is_empty() {
+            model_id
+        } else {
+            cfg.model_id
+        },
+        custom_model_id: cfg.custom_model_id,
     })
 }
 
@@ -376,14 +469,26 @@ fn save_settings(
     openai_api_key: String,
     mock_mode: bool,
     provider: String,
+    model_preset: Option<String>,
+    model_id: Option<String>,
+    custom_model_id: Option<String>,
 ) -> Result<AppStatus, String> {
     let path = config_path(&app)?;
     let existing = read_config_file(&app);
+    let preset = normalize_preset(model_preset.as_deref().unwrap_or(&existing.model_preset));
+    let custom = custom_model_id.unwrap_or(existing.custom_model_id.clone());
+    let (resolved_provider, resolved_model) = resolve_model(&preset, &custom, &provider);
+    let model = model_id
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(resolved_model);
     let body = serde_json::json!({
         "deepseekApiKey": next_key(&deepseek_api_key, &deepseek_key_from(&existing)),
         "openaiApiKey": next_key(&openai_api_key, existing.openai_api_key.trim()),
         "mockMode": mock_mode,
-        "provider": normalize_provider(&provider)
+        "provider": resolved_provider,
+        "modelPreset": preset,
+        "modelId": model,
+        "customModelId": custom.trim()
     });
     fs::write(
         path,
@@ -416,6 +521,7 @@ fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
             updated_at: session.updated_at,
             message_count: session.messages.len(),
             provider: session.provider,
+            model: session.model,
         });
     }
     items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -423,16 +529,26 @@ fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
 }
 
 #[tauri::command]
-fn create_session(app: AppHandle, provider: Option<String>) -> Result<Session, String> {
+fn create_session(
+    app: AppHandle,
+    provider: Option<String>,
+    model: Option<String>,
+) -> Result<Session, String> {
     let cfg = read_config_file(&app);
-    let provider = normalize_provider(provider.as_deref().unwrap_or(&cfg.provider));
+    let incoming_model = model.unwrap_or_else(|| cfg.model_id.clone());
+    let model = if incoming_model.trim().is_empty() {
+        model_for(&normalize_provider(provider.as_deref().unwrap_or(&cfg.provider))).into()
+    } else {
+        incoming_model.trim().to_string()
+    };
+    let provider = infer_provider(&model, provider.as_deref().unwrap_or(&cfg.provider));
     let session = Session {
         id: Uuid::new_v4().to_string(),
         title: "New chat".into(),
         created_at: now_iso(),
         updated_at: now_iso(),
         provider: provider.clone(),
-        model: model_for(&provider).into(),
+        model,
         messages: vec![],
     };
     write_session_files(&app, &session)?;
@@ -445,10 +561,22 @@ fn load_session(app: AppHandle, id: String) -> Result<Session, String> {
 }
 
 #[tauri::command]
-fn set_session_provider(app: AppHandle, id: String, provider: String) -> Result<Session, String> {
+fn set_session_provider(
+    app: AppHandle,
+    id: String,
+    provider: String,
+    model: Option<String>,
+) -> Result<Session, String> {
     let mut session = load_session_from_disk(&app, &id)?;
-    session.provider = normalize_provider(&provider);
-    session.model = model_for(&session.provider).into();
+    let model = model
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| session.model.clone());
+    session.provider = infer_provider(&model, &provider);
+    session.model = if model.trim().is_empty() {
+        model_for(&session.provider).into()
+    } else {
+        model
+    };
     session.updated_at = now_iso();
     write_session_files(&app, &session)?;
     Ok(session)
@@ -529,6 +657,7 @@ async fn send_message(
     session_id: String,
     content: String,
     provider: Option<String>,
+    model: Option<String>,
 ) -> Result<Session, String> {
     let text = content.trim();
     if text.is_empty() {
@@ -536,9 +665,22 @@ async fn send_message(
     }
 
     let mut session = load_session_from_disk(&app, &session_id)?;
-    let provider = normalize_provider(provider.as_deref().unwrap_or(&session.provider));
+    let cfg = read_config_file(&app);
+    let model = model
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            if session.model.is_empty() {
+                cfg.model_id.clone()
+            } else {
+                session.model.clone()
+            }
+        });
+    if model.trim().is_empty() {
+        return Err("Enter a model id.".into());
+    }
+    let provider = infer_provider(&model, provider.as_deref().unwrap_or(&session.provider));
     session.provider = provider.clone();
-    session.model = model_for(&provider).into();
+    session.model = model.clone();
 
     let user_msg = ChatMessage {
         id: Uuid::new_v4().to_string(),
@@ -546,7 +688,7 @@ async fn send_message(
         content: text.to_string(),
         created_at: now_iso(),
         provider: provider.clone(),
-        model: model_for(&provider).into(),
+        model: model.clone(),
     };
     if session.messages.is_empty() {
         session.title = title_from_text(text);
@@ -555,11 +697,10 @@ async fn send_message(
     session.updated_at = now_iso();
     write_session_files(&app, &session)?;
 
-    let cfg = read_config_file(&app);
     let reply = if cfg.mock_mode {
         format!(
             "(Demo mode — {} was not called.) I saved your message: “{}”. This reply is stored in the local transcript.",
-            provider_label(&provider),
+            model_label(&model, &provider),
             text.chars().take(80).collect::<String>()
         )
     } else {
@@ -580,7 +721,7 @@ async fn send_message(
                 env_name
             ));
         }
-        call_chat(&provider, &key, &session.messages).await?
+        call_chat(&provider, &key, &session.messages, &model).await?
     };
 
     session.messages.push(ChatMessage {
@@ -589,14 +730,19 @@ async fn send_message(
         content: reply,
         created_at: now_iso(),
         provider: provider.clone(),
-        model: model_for(&provider).into(),
+        model,
     });
     session.updated_at = now_iso();
     write_session_files(&app, &session)?;
     Ok(session)
 }
 
-async fn call_chat(provider: &str, api_key: &str, history: &[ChatMessage]) -> Result<String, String> {
+async fn call_chat(
+    provider: &str,
+    api_key: &str,
+    history: &[ChatMessage],
+    model: &str,
+) -> Result<String, String> {
     let mut messages: Vec<ApiMsg> = vec![ApiMsg {
         role: "system".into(),
         content: "You are a helpful assistant. Answer in plain text only. Do not use Markdown headings, bold, lists, or code fences.".into(),
@@ -616,7 +762,7 @@ async fn call_chat(provider: &str, api_key: &str, history: &[ChatMessage]) -> Re
         DEEPSEEK_URL
     };
     let body = ChatRequest {
-        model: model_for(provider).into(),
+        model: model.to_string(),
         messages,
         stream: false,
         thinking: if provider == "openai" {

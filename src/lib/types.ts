@@ -25,6 +25,7 @@ export type SessionSummary = {
   updatedAt: string;
   messageCount: number;
   provider: string;
+  model: string;
 };
 
 export type AppStatus = {
@@ -32,6 +33,9 @@ export type AppStatus = {
   hasOpenaiKey: boolean;
   mockMode: boolean;
   provider: ProviderId;
+  modelPreset: string;
+  modelId: string;
+  customModelId: string;
   historyDir: string;
 };
 
@@ -40,8 +44,11 @@ export type AppSettings = {
   openaiApiKey: string;
   mockMode: boolean;
   provider: ProviderId;
+  modelPreset: string;
+  modelId: string;
+  customModelId: string;
 };
 
 export function providerLabel(provider: string): string {
-  return provider === "openai" ? "ChatGPT" : "DeepSeek";
+  return provider === "openai" ? "OpenAI" : "DeepSeek";
 }

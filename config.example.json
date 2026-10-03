@@ -2,5 +2,8 @@
   "deepseekApiKey": "sk-your-deepseek-api-key",
   "openaiApiKey": "sk-your-openai-api-key",
   "mockMode": false,
-  "provider": "deepseek"
+  "provider": "deepseek",
+  "modelPreset": "deepseek",
+  "modelId": "deepseek-flash",
+  "customModelId": ""
 }

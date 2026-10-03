@@ -1,15 +1,27 @@
 # STI-testing-chat
 
-A local desktop chat app (Tauri). Send and receive messages with **DeepSeek** or **ChatGPT**, and save a full transcript on disk so you can review or export it later.
+A local desktop chat app (Tauri). Send and receive messages with **DeepSeek**, **DeepSeek V4 Pro**, **ChatGPT**, **GPT-6 Luna**, or a custom model id, and save a full transcript on disk so you can review or export it later.
 
 ## Features
 
-- Switch provider in the header: DeepSeek or ChatGPT
+- Choose a model in the header (presets plus a Custom field for any model id)
 - Empty, sending, and error states
 - Chat bubbles show plain text (line breaks kept; Markdown is not rendered)
-- Each turn is written to local `sessions/*.json` and a matching `.md` file, including which provider handled the reply
+- Each turn is written to local `sessions/*.json` and a matching `.md` file, including which model handled the reply
 - Open transcripts in the sidebar, export one conversation or all of them
 - The app opens without API keys. Sending without a key shows a clear error. Turn on Demo mode in Settings to try transcripts without calling an API
+
+## Models
+
+| UI label | API id | Provider |
+| --- | --- | --- |
+| DeepSeek (default) | `deepseek-flash` | DeepSeek |
+| DeepSeek V4 Pro | `deepseek-v4-pro` | DeepSeek |
+| ChatGPT | `gpt-4o-mini` | OpenAI |
+| GPT-6 Luna | `gpt-6-luna` | OpenAI |
+| Custom | whatever you type | inferred from the id (`deepseek…` → DeepSeek, `gpt-…` → OpenAI) |
+
+The last custom id is saved in Settings. Chat requests send the selected or typed model id as-is.
 
 ## API keys
 
@@ -29,8 +41,6 @@ macOS: `~/Library/Application Support/com.sti.testingchat/`
 Windows: `%APPDATA%\com.sti.testingchat\`
 
 Previous builds used `com.yaotang.deepseekchat`. Older transcripts stay in that folder; new installs write to `com.sti.testingchat`.
-
-ChatGPT uses the `gpt-4o-mini` model. DeepSeek uses the app’s configured DeepSeek chat model.
 
 ## Development
 
