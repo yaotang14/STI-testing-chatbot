@@ -1,6 +1,6 @@
 # STI-testing-chat
 
-A local desktop chat app (Tauri). Send and receive messages with **DeepSeek**, **DeepSeek V4 Pro**, **ChatGPT**, **GPT-6 Luna**, or a custom model id, and save a full transcript on disk so you can review or export it later.
+A local desktop chat app (Tauri). Send and receive messages with **deepseek-flash**, **deepseek-v4-pro**, **gpt-4o-mini**, **gpt-6-luna**, or a custom model id, and save a full transcript on disk so you can review or export it later.
 
 ## Features
 
@@ -13,13 +13,13 @@ A local desktop chat app (Tauri). Send and receive messages with **DeepSeek**, *
 
 ## Models
 
-| UI label | API id | Provider |
-| --- | --- | --- |
-| DeepSeek (default) | `deepseek-flash` | DeepSeek |
-| DeepSeek V4 Pro | `deepseek-v4-pro` | DeepSeek |
-| ChatGPT | `gpt-4o-mini` | OpenAI |
-| GPT-6 Luna | `gpt-6-luna` | OpenAI |
-| Custom | whatever you type | inferred from the id (`deepseek…` → DeepSeek, `gpt-…` → OpenAI) |
+| UI label (sent as) | Routed to |
+| --- | --- |
+| `deepseek-flash` (default) | DeepSeek API |
+| `deepseek-v4-pro` | DeepSeek API |
+| `gpt-4o-mini` | OpenAI API |
+| `gpt-6-luna` | OpenAI API |
+| Custom | inferred from the id (`deepseek…` → DeepSeek API, `gpt-…` → OpenAI API) |
 
 The last custom id is saved in Settings. Chat requests send the selected or typed model id as-is.
 

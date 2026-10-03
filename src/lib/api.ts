@@ -111,12 +111,10 @@ function looksMasked(value: string): boolean {
 }
 
 function sessionToMarkdown(session: Session): string {
-  const provider = providerLabel(session.provider);
   const lines = [
     `# Chat transcript: ${session.title}`,
     "",
     `- Session ID: ${session.id}`,
-    `- Provider: ${provider}`,
     `- Model: ${session.model}`,
     `- Created: ${session.createdAt}`,
     `- Updated: ${session.updatedAt}`,
@@ -126,12 +124,7 @@ function sessionToMarkdown(session: Session): string {
   ];
   for (const msg of session.messages) {
     const who = msg.role === "user" ? "You" : msg.role === "assistant" ? "Assistant" : msg.role;
-    const via = [
-      msg.provider ? providerLabel(msg.provider) : "",
-      msg.model ? msg.model : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const via = msg.model || "";
     lines.push(`## ${who}${via ? ` · ${via}` : ""} (${msg.createdAt})`, "", msg.content.trim(), "");
   }
   return lines.join("\n");

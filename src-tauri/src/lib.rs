@@ -206,20 +206,18 @@ fn resolve_model(preset: &str, custom_model_id: &str, fallback_provider: &str) -
 
 fn provider_label(provider: &str) -> &'static str {
     if provider == "openai" {
-        "ChatGPT"
+        "OpenAI"
     } else {
         "DeepSeek"
     }
 }
 
-fn model_label(model: &str, provider: &str) -> String {
-    match model {
-        "deepseek-flash" => "DeepSeek".into(),
-        "deepseek-v4-pro" => "DeepSeek V4 Pro".into(),
-        "gpt-4o-mini" => "ChatGPT".into(),
-        "gpt-6-luna" => "GPT-6 Luna".into(),
-        other if other.is_empty() => provider_label(provider).into(),
-        other => other.into(),
+fn model_label(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed.into()
     }
 }
 
@@ -377,10 +375,6 @@ fn session_to_markdown(session: &Session) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Chat transcript: {}\n\n", session.title));
     out.push_str(&format!("- Session ID: {}\n", session.id));
-    out.push_str(&format!(
-        "- Provider: {}\n",
-        provider_label(&session.provider)
-    ));
     out.push_str(&format!("- Model: {}\n", session.model));
     out.push_str(&format!("- Created: {}\n", session.created_at));
     out.push_str(&format!("- Updated: {}\n\n", session.updated_at));
@@ -392,16 +386,10 @@ fn session_to_markdown(session: &Session) -> String {
             "system" => "System",
             other => other,
         };
-        let mut via_parts: Vec<String> = Vec::new();
-        if !msg.model.is_empty() {
-            via_parts.push(model_label(&msg.model, &msg.provider));
-        } else if !msg.provider.is_empty() {
-            via_parts.push(provider_label(&msg.provider).into());
-        }
-        let via = if via_parts.is_empty() {
+        let via = if msg.model.is_empty() {
             String::new()
         } else {
-            format!(" · {}", via_parts.join(" · "))
+            format!(" · {}", model_label(&msg.model))
         };
         out.push_str(&format!("## {}{} ({})\n\n", who, via, msg.created_at));
         out.push_str(msg.content.trim());
@@ -700,7 +688,7 @@ async fn send_message(
     let reply = if cfg.mock_mode {
         format!(
             "(Demo mode — {} was not called.) I saved your message: “{}”. This reply is stored in the local transcript.",
-            model_label(&model, &provider),
+            model_label(&model),
             text.chars().take(80).collect::<String>()
         )
     } else {

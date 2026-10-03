@@ -22,9 +22,8 @@ function formatTime(iso: string): string {
   }).format(d);
 }
 
-function viaLabel(provider?: string, model?: string): string {
-  const name = modelDisplayName(model, provider);
-  return name;
+function viaLabel(model?: string): string {
+  return modelDisplayName(model);
 }
 
 export default function App() {
@@ -354,7 +353,7 @@ export default function App() {
               >
                 <span className="session-title">{item.title}</span>
                 <span className="session-meta">
-                  {viaLabel(item.provider, item.model)} · {item.messageCount} · {formatTime(item.updatedAt)}
+                  {viaLabel(item.model)} · {item.messageCount} · {formatTime(item.updatedAt)}
                 </span>
               </button>
             ))
@@ -386,7 +385,7 @@ export default function App() {
           <div>
             <h2>{current.title}</h2>
             <p>
-              {viaLabel(active.provider, active.modelId || current.model)} · {keyHint}
+              {viaLabel(active.modelId || current.model)} · {keyHint}
             </p>
           </div>
           {modelControls}
@@ -428,7 +427,7 @@ export default function App() {
               <article key={msg.id} className={`bubble ${msg.role}`}>
                 <header>
                   {msg.role === "user" ? "You" : "Assistant"}
-                  {msg.model || msg.provider ? ` · ${viaLabel(msg.provider, msg.model)}` : ""} · {formatTime(msg.createdAt)}
+                  {msg.model ? ` · ${viaLabel(msg.model)}` : ""} · {formatTime(msg.createdAt)}
                 </header>
                 <p>{visiblePlainText(msg.content)}</p>
               </article>
@@ -436,7 +435,7 @@ export default function App() {
           )}
           {loading ? (
             <article className="bubble assistant pending" aria-live="polite">
-              <header>Assistant · {viaLabel(active.provider, active.modelId)}</header>
+              <header>Assistant · {viaLabel(active.modelId)}</header>
               <p>Thinking…</p>
             </article>
           ) : null}
@@ -562,7 +561,7 @@ export default function App() {
                   <div>
                     <strong>{item.title}</strong>
                     <span>
-                      {viaLabel(item.provider, item.model)} · {item.messageCount} messages · {formatTime(item.updatedAt)}
+                      {viaLabel(item.model)} · {item.messageCount} messages · {formatTime(item.updatedAt)}
                     </span>
                   </div>
                   <div className="row">
@@ -587,7 +586,7 @@ export default function App() {
                 {current.messages
                   .map((m) => {
                     const who = m.role === "user" ? "You" : "Assistant";
-                    const via = m.model || m.provider ? ` · ${viaLabel(m.provider, m.model)}` : "";
+                    const via = m.model ? ` · ${viaLabel(m.model)}` : "";
                     return `${who}${via} ${formatTime(m.createdAt)}\n${visiblePlainText(m.content)}`;
                   })
                   .join("\n\n")}

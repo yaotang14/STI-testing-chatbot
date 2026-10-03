@@ -15,10 +15,10 @@ export type ModelPreset = {
 };
 
 export const MODEL_PRESETS: ModelPreset[] = [
-  { id: "deepseek", label: "DeepSeek", provider: "deepseek", modelId: "deepseek-flash" },
-  { id: "deepseek-pro", label: "DeepSeek V4 Pro", provider: "deepseek", modelId: "deepseek-v4-pro" },
-  { id: "chatgpt", label: "ChatGPT", provider: "openai", modelId: "gpt-4o-mini" },
-  { id: "gpt-6-luna", label: "GPT-6 Luna", provider: "openai", modelId: "gpt-6-luna" },
+  { id: "deepseek", label: "deepseek-flash", provider: "deepseek", modelId: "deepseek-flash" },
+  { id: "deepseek-pro", label: "deepseek-v4-pro", provider: "deepseek", modelId: "deepseek-v4-pro" },
+  { id: "chatgpt", label: "gpt-4o-mini", provider: "openai", modelId: "gpt-4o-mini" },
+  { id: "gpt-6-luna", label: "gpt-6-luna", provider: "openai", modelId: "gpt-6-luna" },
   { id: "custom", label: "Custom", provider: "openai", modelId: "" },
 ];
 
@@ -61,10 +61,10 @@ export function resolveModel(
   return { provider: p.provider, modelId: p.modelId, label: p.label };
 }
 
-export function modelDisplayName(modelId?: string, provider?: string): string {
-  if (!modelId) return provider === "openai" ? "ChatGPT" : "DeepSeek";
-  const match = MODEL_PRESETS.find((p) => p.modelId && p.modelId === modelId);
-  return match?.label ?? modelId;
+export function modelDisplayName(modelId?: string, _provider?: string): string {
+  const id = modelId?.trim();
+  if (!id) return "";
+  return id;
 }
 
 export function presetFromModel(modelId: string, provider: ProviderId): ModelPresetId {
