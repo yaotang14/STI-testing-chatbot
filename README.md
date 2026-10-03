@@ -40,7 +40,7 @@ Linux transcripts: `~/.local/share/com.sti.testingchat/sessions/`
 macOS: `~/Library/Application Support/com.sti.testingchat/`  
 Windows: `%APPDATA%\com.sti.testingchat\`
 
-Previous builds used `com.yaotang.deepseekchat`. Older transcripts stay in that folder; new installs write to `com.sti.testingchat`.
+Older builds used a different app identifier. New installs write to `com.sti.testingchat`.
 
 ## Development
 
@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-The browser preview is **http://127.0.0.1:43187**. In the browser, transcripts live in local storage and can be exported. Chat requests go through the local `/api/chat` endpoint.
+The browser preview is **http://127.0.0.1:43187**. This Vite path works on Windows, macOS, and Linux (Node.js required). In the browser, transcripts live in local storage and can be exported. Chat requests go through the local `/api/chat` endpoint.
 
 Desktop window:
 
@@ -61,26 +61,37 @@ npm run dev:desktop
 
 ## Installers
 
-On the target OS:
+`tauri.conf.json` bundle targets are **`deb`**, **`appimage`**, **`nsis`**, and **`dmg`**. There is **no MSI** target. Run `npm run build:installer` **on the OS you want to ship** (Windows NSIS on a Windows machine, `.dmg` on macOS, `.deb`/AppImage on Linux). Cross-building a Windows installer from macOS or Linux is not set up in this repo.
 
 ```bash
 npm install
 npm run build:installer
 ```
 
-Artifacts land in `src-tauri/target/release/bundle/` (not committed).
+Artifacts land in `src-tauri/target/release/bundle/` (not committed). There is no GitHub Release URL in this project.
 
-| OS | Configured bundles |
-| --- | --- |
-| Linux | `.deb`, AppImage |
-| Windows | NSIS (`.exe`) |
-| macOS | `.dmg` |
+| OS | Configured bundles | Build command (on that OS) | Install helper |
+| --- | --- | --- | --- |
+| Linux | `.deb`, AppImage | `npm run build:installer` | `sudo dpkg -i src-tauri/target/release/bundle/deb/*.deb` |
+| Windows | NSIS (`.exe`), current-user install | `npm run build:installer` | `scripts/install-windows.ps1` |
+| macOS | `.dmg` | `npm run build:installer` | `scripts/install-macos.sh` |
 
-Example:
+On another Mac, after a `.dmg` exists (or is copied next to the machine):
 
 ```bash
-sudo dpkg -i src-tauri/target/release/bundle/deb/*.deb
+chmod +x scripts/install-macos.sh
+scripts/install-macos.sh
+# or: scripts/install-macos.sh /path/to/STI-testing-chat.dmg
 ```
+
+On another Windows PC, after an NSIS `.exe` exists:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+# or: powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -InstallerPath C:\path\STI-testing-chat-setup.exe
+```
+
+If the Windows `.exe` is missing, `install-windows.ps1` exits with a clear error: build on Windows first. It will not try to install a `.dmg` or `.deb` on Windows.
 
 Make an AppImage executable, then run it.
 

@@ -1,7 +1,7 @@
 [package]
 name = "sti-testing-chat"
 version = "0.1.0"
-description = "Desktop chat for DeepSeek and ChatGPT"
+description = "STI-testing-chat desktop app"
 authors = ["STI"]
 edition = "2021"
 rust-version = "1.90"
