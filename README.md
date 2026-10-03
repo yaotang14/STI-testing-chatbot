@@ -1,11 +1,12 @@
-# Yao Tang Chat
+# STI-testing-chat
 
-A local desktop chat app (Tauri) for YAO TANG. Send and receive messages with **DeepSeek** or **ChatGPT**, and save a full transcript on disk so you can review or export it later.
+A local desktop chat app (Tauri). Send and receive messages with **DeepSeek** or **ChatGPT**, and save a full transcript on disk so you can review or export it later.
 
 ## Features
 
 - Switch provider in the header: DeepSeek or ChatGPT
 - Empty, sending, and error states
+- Chat bubbles show plain text (line breaks kept; Markdown is not rendered)
 - Each turn is written to local `sessions/*.json` and a matching `.md` file, including which provider handled the reply
 - Open transcripts in the sidebar, export one conversation or all of them
 - The app opens without API keys. Sending without a key shows a clear error. Turn on Demo mode in Settings to try transcripts without calling an API
@@ -22,10 +23,12 @@ export OPENAI_API_KEY=sk-your-key
 
 Or save keys in Settings. The desktop app writes `config.json` in the app config directory. See `config.example.json`.
 
-Linux config: `~/.config/com.yaotang.deepseekchat/config.json`  
-Linux transcripts: `~/.local/share/com.yaotang.deepseekchat/sessions/`  
-macOS: `~/Library/Application Support/com.yaotang.deepseekchat/`  
-Windows: `%APPDATA%\com.yaotang.deepseekchat\`
+Linux config: `~/.config/com.sti.testingchat/config.json`  
+Linux transcripts: `~/.local/share/com.sti.testingchat/sessions/`  
+macOS: `~/Library/Application Support/com.sti.testingchat/`  
+Windows: `%APPDATA%\com.sti.testingchat\`
+
+Previous builds used `com.yaotang.deepseekchat`. Older transcripts stay in that folder; new installs write to `com.sti.testingchat`.
 
 ChatGPT uses the `gpt-4o-mini` model. DeepSeek uses the app’s configured DeepSeek chat model.
 
@@ -38,7 +41,7 @@ npm install
 npm run dev
 ```
 
-The browser preview is **http://127.0.0.1:43187**. In the browser, transcripts live in local storage and can be exported as Markdown. Chat requests go through the local `/api/chat` endpoint (the page does not call the providers directly, which avoids browser CORS failures).
+The browser preview is **http://127.0.0.1:43187**. In the browser, transcripts live in local storage and can be exported. Chat requests go through the local `/api/chat` endpoint.
 
 Desktop window:
 

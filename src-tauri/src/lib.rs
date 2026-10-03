@@ -599,7 +599,7 @@ async fn send_message(
 async fn call_chat(provider: &str, api_key: &str, history: &[ChatMessage]) -> Result<String, String> {
     let mut messages: Vec<ApiMsg> = vec![ApiMsg {
         role: "system".into(),
-        content: "You are a helpful assistant. Answer clearly and concisely.".into(),
+        content: "You are a helpful assistant. Answer in plain text only. Do not use Markdown headings, bold, lists, or code fences.".into(),
     }];
     for msg in history {
         if msg.role == "user" || msg.role == "assistant" {

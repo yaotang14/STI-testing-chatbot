@@ -1,13 +1,13 @@
 [package]
-name = "yao-tang-chat"
+name = "sti-testing-chat"
 version = "0.1.0"
 description = "Desktop chat for DeepSeek and ChatGPT"
-authors = ["YAO TANG"]
+authors = ["STI"]
 edition = "2021"
 rust-version = "1.90"
 
 [lib]
-name = "yao_tang_chat_lib"
+name = "sti_testing_chat_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

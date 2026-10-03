@@ -3,7 +3,7 @@ import { providerLabel } from "./types";
 
 const DEEPSEEK_MODEL = "deepseek-flash";
 const OPENAI_MODEL = "gpt-4o-mini";
-const STORE_KEY = "yao-tang-chat-v2";
+const STORE_KEY = "sti-testing-chat-v1";
 const WEB_HISTORY = "Browser storage (export as Markdown)";
 
 type Store = {
@@ -56,7 +56,10 @@ function migrateSession(raw: Session): Session {
 
 function readStore(): Store {
   try {
-    const raw = localStorage.getItem(STORE_KEY) ?? localStorage.getItem("yao-tang-chat-v1");
+    const raw =
+      localStorage.getItem(STORE_KEY) ??
+      localStorage.getItem("yao-tang-chat-v2") ??
+      localStorage.getItem("yao-tang-chat-v1");
     if (!raw) return emptyStore();
     const parsed = JSON.parse(raw) as Partial<Store> & { apiKey?: string };
     const sessions: Record<string, Session> = {};
@@ -140,7 +143,7 @@ function historyMessages(messages: Session["messages"]) {
   return [
     {
       role: "system",
-      content: "You are a helpful assistant. Answer clearly and concisely.",
+      content: "You are a helpful assistant. Answer in plain text only. Do not use Markdown headings, bold, lists, or code fences.",
     },
     ...messages
       .filter((m) => m.role === "user" || m.role === "assistant")

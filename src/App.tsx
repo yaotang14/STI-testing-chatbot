@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api } from "./lib/api";
 import type { AppStatus, ProviderId, Session, SessionSummary } from "./lib/types";
 import { providerLabel } from "./lib/types";
+import { visiblePlainText } from "./lib/plainText";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -234,8 +235,7 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
           <div>
-            <p className="eyebrow">YAO TANG</p>
-            <h1>Chat</h1>
+            <h1>STI-testing-chat</h1>
           </div>
           <button className="ghost" type="button" onClick={startNew}>
             New chat
@@ -343,7 +343,7 @@ export default function App() {
                   {msg.role === "user" ? "You" : "Assistant"}
                   {msg.provider ? ` · ${providerLabel(msg.provider)}` : ""} · {formatTime(msg.createdAt)}
                 </header>
-                <p>{msg.content}</p>
+                <p>{visiblePlainText(msg.content)}</p>
               </article>
             ))
           )}
@@ -485,7 +485,7 @@ export default function App() {
                   .map((m) => {
                     const who = m.role === "user" ? "You" : "Assistant";
                     const via = m.provider ? ` · ${providerLabel(m.provider)}` : "";
-                    return `${who}${via} ${formatTime(m.createdAt)}\n${m.content}`;
+                    return `${who}${via} ${formatTime(m.createdAt)}\n${visiblePlainText(m.content)}`;
                   })
                   .join("\n\n")}
               </pre>
